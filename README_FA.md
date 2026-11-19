@@ -51,10 +51,10 @@ cd filternet
 python3 -m filternet doctor
 ```
 
-یا نصب به‌عنوان دستور سراسری `filternet`:
+یا نصب به‌عنوان دستور سراسری `filternet` (در ویندوز/مک با `pip install .` و در دبیان/اوبونتو/کالی با `pipx install .`):
 
 ```bash
-pip install .
+pipx install .
 ```
 
 ### دستورات کاربردی روزمره

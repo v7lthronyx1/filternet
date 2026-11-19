@@ -49,10 +49,10 @@ cd filternet
 python3 -m filternet doctor
 ```
 
-Or install the `filternet` command system-wide:
+Or install the `filternet` command cleanly (`pipx install .` on Debian/Ubuntu/Kali, or `pip install .` on Windows/macOS/venv):
 
 ```bash
-pip install .
+pipx install .
 ```
 
 ```bash
@@ -107,10 +107,10 @@ cd filternet
 python3 -m filternet doctor
 ```
 
-یا نصب به‌عنوان دستور سراسری `filternet`:
+یا نصب دستور سراسری `filternet` (در ویندوز/مک با `pip install .` و در دبیان/اوبونتو/کالی با `pipx install .` یا داخل venv):
 
 ```bash
-pip install .
+pipx install .
 ```
 
 ### دستورات کاربردی روزمره

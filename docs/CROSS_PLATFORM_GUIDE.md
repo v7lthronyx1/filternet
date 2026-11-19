@@ -13,9 +13,9 @@ cd filternet
 python -m filternet doctor
 ```
 
-Or install the `filternet` command globally:
+Or install the `filternet` command (`pip install .` on Windows/macOS, or `pipx install .` on Debian/Ubuntu/Kali Linux):
 ```bash
-pip install .
+pipx install .
 filternet doctor
 ```
 

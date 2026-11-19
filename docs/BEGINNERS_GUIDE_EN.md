@@ -47,9 +47,9 @@ cd filternet
 ```
 *(No `git`? On GitHub click the green **Code** button -> **Download ZIP**, extract it, and open Terminal/PowerShell inside that folder.)*
 
-Optional install so you can type `filternet` from any folder:
+Optional install so you can type `filternet` from any folder (use `pipx install .` on modern Debian/Ubuntu/Kali Linux, or `pip install .` on Windows/macOS):
 ```bash
-pip install .
+pipx install .
 ```
 *(Or skip installing and just put `python -m ` or `python3 -m ` in front of every `filternet` command below.)*
 
