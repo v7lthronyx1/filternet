@@ -1,0 +1,359 @@
+#!/usr/bin/env bash
+set -u
+
+CMD="${1:-help}"
+ARG="${2:-}"
+
+if [ "$CMD" = "help" ] || [ "$CMD" = "-h" ] || [ "$CMD" = "--help" ]; then
+  printf 'Usage: ss-wg <fix-system|up|down|clean|status> [phx|lax|<profile>|/path/to/conf] [--force]\n'
+  exit 0
+fi
+
+if [ "$EUID" -ne 0 ]; then
+  SCRIPT_PATH="$(readlink -f "$0")"
+  exec sudo "$SCRIPT_PATH" "$@"
+fi
+
+USER_NAME="${SUDO_USER:-$(id -un)}"
+USER_HOME="$(getent passwd "$USER_NAME" | cut -d: -f6)"
+[ -n "$USER_HOME" ] || USER_HOME="/root"
+CONF_DIR="${SS_WG_CONF_DIR:-$USER_HOME/Downloads}"
+PHX_CONF="$CONF_DIR/ss-phx.conf"
+LAX_CONF="$CONF_DIR/ss-lax.conf"
+RUN_CONF="/run/ss-wg.conf"
+
+get_val() {
+  awk -v k="$1" '
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      if (line ~ "^[[:space:]]*" k "[[:space:]]*=") {
+        sub("^[[:space:]]*" k "[[:space:]]*=[[:space:]]*", "", line)
+        sub(/[[:space:]]+$/, "", line)
+        print line
+        exit
+      }
+    }
+  ' "$2"
+}
+
+ensure_dns() {
+  if ! grep -q '^nameserver ' /etc/resolv.conf 2>/dev/null; then
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+    printf 'nameserver 127.0.2.1\n' > /etc/resolv.conf
+  fi
+}
+
+clean_wg() {
+  if [ -f "$RUN_CONF" ] && ip link show ss-wg >/dev/null 2>&1; then
+    wg-quick down "$RUN_CONF" >/dev/null 2>&1 || true
+  fi
+  rm -f "$RUN_CONF"
+
+  for iface in ss-wg ss-phx ss-lax; do
+    if ip link show "$iface" >/dev/null 2>&1; then
+      ip link delete dev "$iface" 2>/dev/null || true
+    fi
+  done
+
+  if ! ip link show utun420 >/dev/null 2>&1; then
+    while ip -4 rule del not fwmark 51820 table 51820 2>/dev/null; do :; done
+    while ip -4 rule del table main suppress_prefixlength 0 2>/dev/null; do :; done
+    ip -4 route flush table 51820 2>/dev/null || true
+  fi
+
+  for tbl in wg-quick-ss-wg wg-quick-ss-phx wg-quick-ss-lax; do
+    nft delete table ip "$tbl" 2>/dev/null || true
+    nft delete table ip6 "$tbl" 2>/dev/null || true
+  done
+
+  ensure_dns
+}
+
+fix_system() {
+  clean_wg
+
+  if systemctl is-active --quiet expressvpn-service 2>/dev/null || systemctl is-enabled --quiet expressvpn-service 2>/dev/null; then
+    systemctl disable --now expressvpn-service >/dev/null 2>&1 || true
+  fi
+
+  if ! systemctl is-active --quiet expressvpn-service 2>/dev/null; then
+    while ip -4 rule del fwmark 0x3214 table evpnFwdrt 2>/dev/null; do :; done
+    while ip -4 rule del table main suppress_prefixlength 1 2>/dev/null; do :; done
+    while ip -6 rule del fwmark 0x3214 table evpnFwdrt 2>/dev/null; do :; done
+    while ip -6 rule del table main suppress_prefixlength 1 2>/dev/null; do :; done
+  fi
+
+  if [ -x /etc/NetworkManager/dispatcher.d/99-vpn-route ]; then
+    chmod -x /etc/NetworkManager/dispatcher.d/99-vpn-route
+  fi
+
+  cat > /etc/NetworkManager/conf.d/90-ss-wg-unmanaged.conf <<'EOF'
+[keyfile]
+unmanaged-devices=interface-name:ss-*
+EOF
+  nmcli general reload conf >/dev/null 2>&1 || true
+
+  systemctl enable --now dnscrypt-proxy.socket >/dev/null 2>&1 || true
+  systemctl is-active --quiet dnscrypt-proxy.service || systemctl start dnscrypt-proxy.service >/dev/null 2>&1 || true
+  ensure_dns
+
+  printf 'System cleaned.\n'
+  show_status
+}
+
+show_status() {
+  printf '=== Default Route ===\n'
+  ip -4 route show default
+  printf '=== Active Interfaces ===\n'
+  ip -br addr | grep -vE '^(br-|docker|lxcbr|veth|lo )'
+  printf '=== WireGuard ===\n'
+  wg show 2>/dev/null || true
+  printf '=== IP Rules ===\n'
+  ip -4 rule show
+  printf '=== DNS ===\n'
+  cat /etc/resolv.conf 2>/dev/null || true
+}
+
+check_other_vpn() {
+  local force="$1"
+  local active=""
+  for dev in surfshark_tun tun0 utun420; do
+    if ip link show "$dev" >/dev/null 2>&1; then
+      active="$active $dev"
+    fi
+  done
+  if [ -n "$active" ]; then
+    if [ "$force" = "--force" ]; then
+      nmcli con down surfshark_openvpn >/dev/null 2>&1 || true
+      nmcli con down surfshark_ipv6 >/dev/null 2>&1 || true
+      nmcli con down surfshark_2 >/dev/null 2>&1 || true
+      if command -v windscribe-cli >/dev/null 2>&1; then
+        su - "$USER_NAME" -c 'windscribe-cli disconnect' >/dev/null 2>&1 || true
+      fi
+      sleep 2
+    else
+      printf 'Another VPN is active (%s). Disconnect it first or run: ss-wg up --force\n' "${active# }" >&2
+      exit 1
+    fi
+  fi
+}
+
+resolve_domain_ips() {
+  local host="$1"
+  local out=""
+  if command -v dig >/dev/null 2>&1; then
+    out="$(dig +short +time=2 +tries=1 @127.0.2.1 "$host" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)"
+  fi
+  if [ -z "$out" ] && command -v curl >/dev/null 2>&1; then
+    out="$(curl -4 -sS --max-time 3 -H 'Accept: application/dns-json' "https://1.1.1.1/dns-query?name=${host}&type=A" 2>/dev/null | grep -oE '"data":"([0-9]{1,3}\.){3}[0-9]{1,3}"' | cut -d'"' -f4 || true)"
+  fi
+  printf '%s\n' "$out"
+}
+
+do_up() {
+  local mode="all"
+  local force=""
+  local custom_profile=""
+  for a in "$@"; do
+    case "$a" in
+      --force) force="--force" ;;
+      phx|lax|all) mode="$a" ;;
+      *) custom_profile="$a" ;;
+    esac
+  done
+
+  local base_conf="$PHX_CONF"
+  local custom_conf=""
+  if [ -n "$custom_profile" ]; then
+    if [ -f "$custom_profile" ]; then
+      custom_conf="$custom_profile"
+    elif [ -f "$CONF_DIR/ss-${custom_profile}.conf" ]; then
+      custom_conf="$CONF_DIR/ss-${custom_profile}.conf"
+    elif [ -f "$CONF_DIR/${custom_profile}.conf" ]; then
+      custom_conf="$CONF_DIR/${custom_profile}.conf"
+    else
+      printf 'Profile config not found: %s (checked %s)\n' "$custom_profile" "$CONF_DIR" >&2
+      exit 1
+    fi
+    base_conf="$custom_conf"
+  elif [ ! -f "$PHX_CONF" ]; then
+    if [ -f "$LAX_CONF" ] && [ "$mode" != "phx" ]; then
+      base_conf="$LAX_CONF"
+      mode="lax"
+    else
+      local first_conf=""
+      first_conf="$(find "$CONF_DIR" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | sort | head -n 1 || true)"
+      if [ -n "$first_conf" ]; then
+        custom_conf="$first_conf"
+        custom_profile="$(basename "$first_conf" .conf)"
+        base_conf="$first_conf"
+      else
+        printf 'No WireGuard .conf found in %s (pass a profile path or set SS_WG_CONF_DIR)\n' "$CONF_DIR" >&2
+        exit 1
+      fi
+    fi
+  fi
+
+  check_other_vpn "$force"
+
+  if ! ip -4 route show default | grep -q '^default'; then
+    printf 'No default IPv4 route found. Connect eth0 or wlan0 first.\n' >&2
+    exit 1
+  fi
+
+  trap 'clean_wg; exit 130' INT TERM
+  clean_wg
+
+  local priv addr phx_pub lax_pub
+  priv="$(get_val PrivateKey "$base_conf")"
+  addr="$(get_val Address "$base_conf")"
+  phx_pub="$(get_val PublicKey "$base_conf")"
+  lax_pub=""
+  [ -f "$LAX_CONF" ] && lax_pub="$(get_val PublicKey "$LAX_CONF")"
+
+  if [ -z "$priv" ] || [ -z "$addr" ] || [ -z "$phx_pub" ]; then
+    printf 'Failed to parse keys from %s\n' "$base_conf" >&2
+    exit 1
+  fi
+
+  local -a candidates=()
+  local seen=" "
+
+  add_cand() {
+    local label="$1" ip="$2" pub="$3" port="${4:-51820}"
+    [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
+    [ -n "$pub" ] || return 0
+    if [[ "$seen" != *" $ip:$port "* ]]; then
+      seen="$seen$ip:$port "
+      candidates+=("$label|$ip|$pub|$port")
+    fi
+  }
+
+  if [ -n "$custom_conf" ]; then
+    local ep ep_host ep_port
+    ep="$(get_val Endpoint "$custom_conf")"
+    ep_host="${ep%:*}"
+    ep_port="${ep##*:}"
+    [[ "$ep_port" =~ ^[0-9]+$ ]] || ep_port="51820"
+    if [[ "$ep_host" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      add_cand "$custom_profile" "$ep_host" "$phx_pub" "$ep_port"
+    elif [ -n "$ep_host" ]; then
+      while read -r ip; do
+        add_cand "$custom_profile" "$ip" "$phx_pub" "$ep_port"
+      done < <(resolve_domain_ips "$ep_host")
+    fi
+  else
+    if [ "$mode" = "all" ] || [ "$mode" = "phx" ]; then
+      for ip in 172.216.11.25 172.216.11.10 172.216.11.35 172.216.11.37; do
+        add_cand "us-phx" "$ip" "$phx_pub"
+      done
+      while read -r ip; do
+        add_cand "us-phx-dns" "$ip" "$phx_pub"
+      done < <(resolve_domain_ips "us-phx.prod.surfshark.com")
+    fi
+
+    if [ "$mode" = "all" ] || [ "$mode" = "lax" ]; then
+      if [ -n "$lax_pub" ]; then
+        for ip in 89.187.187.86 89.187.187.73 45.149.173.232 154.47.31.2 169.150.203.194; do
+          add_cand "us-lax" "$ip" "$lax_pub"
+        done
+        while read -r ip; do
+          add_cand "us-lax-dns" "$ip" "$lax_pub"
+        done < <(resolve_domain_ips "us-lax.prod.surfshark.com")
+      fi
+    fi
+
+    if [ "$mode" = "all" ] || [ "$mode" = "phx" ]; then
+      for ip in 45.86.211.64 45.86.211.3 45.86.211.1; do
+        add_cand "us-phx-alt" "$ip" "$phx_pub"
+      done
+    fi
+  fi
+
+  if [ "${#candidates[@]}" -eq 0 ]; then
+    printf 'No WireGuard endpoint candidates resolved.\n' >&2
+    exit 1
+  fi
+
+  local no_hs_cnt=0
+  local https_fail_cnt=0
+
+  for item in "${candidates[@]}"; do
+    IFS='|' read -r label ip pub port <<< "$item"
+    [ -n "$port" ] || port="51820"
+    printf 'Testing %s (%s:%s)... ' "$label" "$ip" "$port"
+
+    (
+      umask 077
+      cat > "$RUN_CONF" <<EOF
+[Interface]
+Address = $addr
+PrivateKey = $priv
+MTU = 1280
+
+[Peer]
+PublicKey = $pub
+AllowedIPs = 0.0.0.0/0
+Endpoint = $ip:$port
+PersistentKeepalive = 25
+EOF
+    )
+
+    if ! wg-quick up "$RUN_CONF" >/dev/null 2>&1; then
+      printf 'wg-quick failed\n'
+      clean_wg
+      continue
+    fi
+
+    ping -c 2 -W 1 1.1.1.1 >/dev/null 2>&1 || true
+
+    local hs="0"
+    for _ in 1 2 3; do
+      hs="$(wg show ss-wg latest-handshakes 2>/dev/null | awk '{print $2}')"
+      if [ -n "$hs" ] && [ "$hs" != "0" ]; then
+        break
+      fi
+      sleep 1
+    done
+
+    if [ -z "$hs" ] || [ "$hs" = "0" ]; then
+      printf 'no handshake\n'
+      no_hs_cnt=$((no_hs_cnt + 1))
+      clean_wg
+      continue
+    fi
+
+    local http_line
+    http_line="$(curl -sI --max-time 4 https://1.1.1.1 2>/dev/null | head -n 1 | tr -d '\r')"
+    if [ -n "$http_line" ]; then
+      printf 'CONNECTED (%s)\n' "$http_line"
+      wg show ss-wg
+      trap - INT TERM
+      exit 0
+    fi
+
+    printf 'handshake ok, HTTPS timed out\n'
+    https_fail_cnt=$((https_fail_cnt + 1))
+    clean_wg
+  done
+
+  trap - INT TERM
+  clean_wg
+  printf 'All %d Surfshark WireGuard endpoints failed (no_handshake=%d, https_timeout=%d).\n' "${#candidates[@]}" "$no_hs_cnt" "$https_fail_cnt" >&2
+  if [ "$no_hs_cnt" -eq "${#candidates[@]}" ]; then
+    printf 'Hint: UDP/51820 may be blocked on current IP range or try an EU profile (ss-wg up <profile>).\n' >&2
+  fi
+  exit 1
+}
+
+case "$CMD" in
+  fix-system) fix_system ;;
+  up) shift; do_up "$@" ;;
+  down|clean) clean_wg; printf 'Cleaned.\n' ;;
+  status) show_status ;;
+  *)
+    printf 'Unknown command: %s\nUsage: ss-wg <fix-system|up|down|clean|status> [phx|lax|<profile>|/path/to/conf] [--force]\n' "$CMD" >&2
+    exit 1
+    ;;
+esac

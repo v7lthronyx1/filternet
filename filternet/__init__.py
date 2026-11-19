@@ -1,0 +1,6 @@
+APP_NAME = "FilterNet"
+CLI_NAME = "filternet"
+BRAND = "V7lthronyx"
+AUTHOR = "Aiden Azad"
+REPO_URL = "https://github.com/v7lthronyx1/filternet"
+__version__ = "1.0.0"

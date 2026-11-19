@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "filternet"
+version = "1.0.0"
+description = "Cross-platform ISP filtering diagnostics, encrypted DNS configs, Fastly mirror pinning, and WireGuard helpers by V7lthronyx"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+  {name = "Aiden Azad"}
+]
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+filternet = "filternet.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/v7lthronyx1/filternet"
+Repository = "https://github.com/v7lthronyx1/filternet"
+Author = "https://github.com/v7lthronyx1"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["filternet*"]

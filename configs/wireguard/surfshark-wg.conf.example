@@ -1,0 +1,10 @@
+[Interface]
+PrivateKey = <YOUR_SURFSHARK_WIREGUARD_PRIVATE_KEY>
+Address = 10.14.0.2/16
+MTU = 1280
+
+[Peer]
+PublicKey = <SERVER_WIREGUARD_PUBLIC_KEY>
+AllowedIPs = 0.0.0.0/0
+Endpoint = <SERVER_IP_OR_DOMAIN>:51820
+PersistentKeepalive = 25

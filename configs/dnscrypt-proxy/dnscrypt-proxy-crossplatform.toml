@@ -1,0 +1,31 @@
+listen_addresses = ['127.0.0.1:53']
+server_names = ['cf1', 'cf2', 'gg1', 'gg2']
+ipv4_servers = true
+ipv6_servers = false
+dnscrypt_servers = false
+doh_servers = true
+require_dnssec = false
+require_nolog = false
+require_nofilter = false
+ignore_system_dns = true
+netprobe_timeout = 0
+timeout = 2500
+keepalive = 5
+lb_strategy = 'wp2'
+cache = true
+cache_size = 4096
+cache_min_ttl = 60
+cache_max_ttl = 600
+cache_neg_min_ttl = 30
+cache_neg_max_ttl = 60
+bootstrap_resolvers = ['1.1.1.1:53', '8.8.8.8:53']
+
+[static]
+  [static.'cf1']
+  stamp = 'sdns://AgcAAAAAAAAABzEuMS4xLjEABzEuMS4xLjEKL2Rucy1xdWVyeQ'
+  [static.'cf2']
+  stamp = 'sdns://AgcAAAAAAAAABzEuMC4wLjEABzEuMC4wLjEKL2Rucy1xdWVyeQ'
+  [static.'gg1']
+  stamp = 'sdns://AgcAAAAAAAAABzguOC44LjgABzguOC44LjgKL2Rucy1xdWVyeQ'
+  [static.'gg2']
+  stamp = 'sdns://AgcAAAAAAAAABzguOC40LjQABzguOC40LjQKL2Rucy1xdWVyeQ'
