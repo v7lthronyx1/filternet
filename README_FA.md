@@ -1,95 +1,101 @@
 # FilterNet (فیلترنت)
 
-ابزار چندسکویی تشخیص فیلترینگ اینترنت، پروفیل‌های DNS رمزنگاری‌شده، رفع قفل مخازن روی Fastly و بهینه‌سازی WireGuard برای **Windows**، **macOS** و **Linux**
+**رفع مشکل DNS، قفل شدن دانلودها و قطعی VPN روی ویندوز، مک و لینوکس — بدون نیاز به دانش فنی**
 
 ساخته‌شده توسط **Aiden Azad** — **[V7lthronyx](https://github.com/v7lthronyx1)**
 
-> [English Documentation (README.md)](README.md)
+> **[English README (README.md)](README.md)** · **[راهنمای ساده برای کاربران عادی (فارسی)](docs/BEGINNERS_GUIDE_FA.md)** · **[Plain-Language Guide (English)](docs/BEGINNERS_GUIDE_EN.md)**
 
 ---
 
-## چرا FilterNet؟
+## فیلترنت دقیقاً چه‌کار می‌کند؟ (به زبان ساده)
 
-ممیزی‌های سطح بسته (`PCAP`) روی اینترنت همراه اول (`AS197207` — جزئیات کامل در [docs/MCI_FORENSIC_FINDINGS.md](docs/MCI_FORENSIC_FINDINGS.md)) نشان داد اختلال‌های روزمره در VPN، دانلودها و مدیریت پکیج‌ها ریشه مشخص و قابل تکرار دارند:
+خیلی وقت‌ها اینترنت موبایل یا وای‌فای به ظاهر وصل است و گوگل باز می‌شود، ولی VPN مدام می‌چرخد و وصل نمی‌شود، دانلودهای لینوکس و پایتون همان ثانیه اول قفل می‌کنند، یا کلی از سایت‌ها بی‌دلیل خطا می‌دهند.
 
-1. **ربایش DNS روی پورت `53` و `5353` و حذف رکورد `HTTPS`:** هر دو پورت `53` و غیرمتعارف `5353` (UDP/TCP) به آی‌پی‌های مسموم (`10.10.34.36`، SafeSearch `216.239.38.120` یا `10.110.10.1`) هدایت می‌شوند و `30/30` رکورد `HTTPS/SVCB` حذف می‌گردد.
-2. **بسته بودن `DoT`، `DoQ` و `DoH` دامنه‌ای:** با وجود باز بودن `portquiz.net:853`، پروتکل‌های `DoT (853/tcp)` (`0/7`)، `DoQ (853/udp)` (`0/2`) و `DoH` مبتنی بر دامنه (`0/5`) قطع می‌شوند و تنها **DoH مبتنی بر IP خالص (`1.1.1.1`، `1.0.0.1`، `8.8.8.8`، `8.8.4.4` روی `443/tcp`)** پایدار کار می‌کند.
-3. **الگوی DPI (`TTL=60` و `NSV2`) و بایپس `split_2b`:** حتی دامنه‌های ساختگی ناموجود (`probe-test-404.*`) روی دو سرور مستقل آلمان (`Hetzner` و `Vultr`) با `TCP RST` (`p = 2.73e-34`) و صفحه `403 NSV2` قطع می‌شوند. حالت‌های `tls12`، `pad1800` و `ech_grease` مسدودند و تنها **`split_2b`** و **`rec_split_2`/`5`** عبور می‌کنند؛ همچنین `QUIC v1 (UDP/443)` با `100%` ریزش همراه است.
-4. **قفل شدن مخازن روی Fastly `151.101.18.132` (بایت `5552`):** دریافت از `deb.debian.org` روی نود `151.101.18.132` دقیقاً پس از `5,552` بایت قفل می‌شود، در حالی که نودهای هم‌خانواده سالم (`146.75.118.132`، `151.101.130.132`، `151.101.66.132`، `151.101.194.132` و `151.101.0.223`) با سرعت کامل دانلود می‌شوند.
-5. **اختلال سرورهای ابری و تنظیمات WireGuard:** `45.6%` (`26/57`) اندپوینت‌های ابری روی همراه اول مختل بودند (`Linode`، `DigitalOcean`، `OVH` و حلقه `10.21.212.x` برای `Microsoft 150.171.109.71`)، در حالی که `Hetzner`، `Vultr`، `Cloudflare`، `GitHub` و `Ubuntu Archive` سالم‌اند. کانفیگ‌های WireGuard برای کارکرد پایدار نیازمند `MTU = 1280`، `PersistentKeepalive = 25`، حذف خط `DNS =` متداخل و رزولوشن IP از طریق DoH هستند.
+در بیشتر این موارد کامپیوتر یا گوشی شما هیچ مشکلی ندارد؛ اپراتور وسط راه دفترچه آدرس (`DNS`) را دستکاری می‌کند، هنگام شنیدن اسم سایت ارتباط را قطع می‌کند، یا برخی سرورها را بعد از ۵ کیلوبایت قفل می‌کند.
 
-برای کپچر خودکار `dumpcap`/`tshark` و تولید فایل‌های PDF شکایت رگولاتوری (`۱۹۵`) از پروژه مکمل **[shitnet](https://github.com/v7lthronyx1/shitnet)** استفاده کنید.
+**FilterNet** در حدود ۱۰ ثانیه (فقط با خود Python 3.9+ و بدون نیاز به نصب هیچ پکیج اضافه‌ای) مشکل خط شما را پیدا می‌کند و راه‌حل‌های امن و قابل برگشت را روی **Windows**، **macOS** و **Linux** در اختیارتان می‌گذارد.
+
+![پیش‌نمایش محیط ابزار FilterNet](docs/images/01_filternet_overview.png)
 
 ---
 
-## شروع سریع روی Windows، macOS و Linux
+## ۴ مشکل پنهانی که اینترنت را از کار می‌اندازند
 
-ابزار اصلی بدون هیچ پکیج اضافه‌ای و صرفاً با کتابخانه استاندارد **Python 3.9+** اجرا می‌شود.
+![چرا اینترنت وصل است ولی کار نمی‌کند و FilterNet چطور درستش می‌کند](docs/images/02_how_filtering_breaks_things.png)
 
-اجرای مستقیم بدون نصب:
+| مشکل شما چیست؟ | پشت صحنه دقیقاً چه اتفاقی می‌افتد؟ | راه‌حل مستقیم |
+| :--- | :--- | :--- |
+| سایت‌ها یا VPN اصلاً سرور را پیدا نمی‌کنند | DNS اپراتور آدرس جعلی و بن‌بست (`10.10.34.36`) تحویل می‌دهد — حتی روی پورت `5353` و دامنه‌های `DoT`/`DoH`. | `filternet dns-config` (تنظیم DoH فقط با IP) |
+| دانلود و آپدیت `apt` / `pip` سر ۵ کیلوبایت قفل می‌کند | سرور Fastly با آی‌پی `151.101.18.132` بعد از `5,552 بایت` متوقف می‌شود، ولی نودهای کناری سالم‌اند. | `sudo filternet hosts-pin apply` |
+| WireGuard وصل نمی‌شود یا با اتصال اینترنت ندارد | سایز بسته روی موبایل بزرگ است (`MTU`) و آدرس سرور از DNS مسموم گرفته می‌شود. | `filternet wg-prepare raw.conf -o clean.conf` |
+| Windscribe / Surfshark وصل است ولی صفحه باز نمی‌شود | تیک‌های اضافی داخل برنامه (`Protocol Tweaks` یا `Custom SNI` اشتباه)، بریج‌های قدیمی لینوکس یا مسدود بودن سرورهای آمریکا. | تست سرورهای اروپا (`Hetzner`/`Vultr`/آلمان/هلند) و اجرای `filternet probe` |
+
+---
+
+## پیش‌نمایش دستورات اصلاح فوری
+
+![ابزارهای اصلاح فوری FilterNet](docs/images/03_tools_and_fixes_preview.png)
+
+---
+
+## شروع سریع در ۳ قدم (Windows / macOS / Linux)
+
+![شروع سریع برای کاربران عادی روی ویندوز، مک و لینوکس](docs/images/04_cross_platform_quickstart.png)
+
+بدون نیاز به نصب پکیج خارجی (فقط `Python 3.9+`):
+
 ```bash
 git clone https://github.com/v7lthronyx1/filternet.git
 cd filternet
 python3 -m filternet doctor
 ```
 
-یا نصب به‌صورت دستور سراسری `filternet`:
+یا نصب به‌عنوان دستور سراسری `filternet`:
+
 ```bash
 pip install .
 ```
 
-### دستورات مشترک روی هر سه سیستم‌عامل
+### دستورات کاربردی روزمره
 
-- **بررسی سریع وضعیت شبکه، DNS، Fastly و PMTU (فقط‌خواندنی):**
-  ```bash
-  filternet doctor
-  ```
-- **اسکن فعال DNS (`53`/`5353`)، تله SNI، بایپس `split_2b`، قفل Fastly و وضعیت سرورهای ابری:**
-  ```bash
-  filternet probe
-  filternet probe --quick --json
-  ```
-- **بررسی و پین‌کردن آی‌پی‌های سالم Fastly در فایل `hosts` سیستم (با دسترسی Admin / `sudo`):**
-  ```bash
-  filternet hosts-pin status
-  filternet hosts-pin apply
-  filternet hosts-pin revert
-  ```
-- **بهینه‌سازی هر فایل کانفیگ WireGuard (`MTU = 1280`، `Keepalive = 25`، رزولوشن Endpoint با DoH و حذف DNS متداخل):**
-  ```bash
-  filternet wg-prepare raw-profile.conf -o clean-profile.conf
-  ```
-- **تولید فایل تنظیم `dnscrypt-proxy` با DoH مبتنی بر IP خالص:**
-  ```bash
-  filternet dns-config --target crossplatform -o dnscrypt-proxy.toml
-  ```
+```bash
+filternet doctor                                                # بررسی سریع و امن همراه با توضیح ساده مشکل
+filternet probe                                                 # تست DNS (53/5353)، بایپس split_2b، قفل Fastly و وضعیت کلودها
+filternet hosts-pin status                                      # بررسی قفل بودن نود 151.101.18.132 برای دانلودها
+sudo filternet hosts-pin apply                                  # پین کردن نود سالم Fastly (در ویندوز با Admin / مک و لینوکس با sudo)
+sudo filternet hosts-pin revert                                 # بازگرداندن فایل hosts به حالت اول
+filternet wg-prepare raw.conf -o clean.conf                     # بهینه‌سازی هر فایل WireGuard (تنظیم MTU 1280 و Keepalive 25)
+filternet dns-config --target crossplatform -o dnscrypt-proxy.toml  # ساخت کانفیگ آماده dnscrypt-proxy با DoH مبتنی بر IP
+```
 
-راهنمای گام‌به‌گام برای هر سیستم‌عامل در [docs/CROSS_PLATFORM_GUIDE.md](docs/CROSS_PLATFORM_GUIDE.md) قرار دارد.
+اگر با ترمینال یا مفاهیم شبکه آشنا نیستید، **[راهنمای ساده قدم‌به‌قدم فارسی](docs/BEGINNERS_GUIDE_FA.md)** یا **[راهنمای نصب روی ویندوز، مک و لینوکس](docs/CROSS_PLATFORM_GUIDE.md)** را بخوانید.
 
 ---
 
-## اسکریپت‌های تکمیلی لینوکس
+## اسکریپت‌های ویژه لینوکس
 
-- [scripts/diagnose-vpn.sh](scripts/diagnose-vpn.sh): بررسی خواندنی NetworkManager، بریج‌های یتیم `172.20.0.0/16`، قوانین `ip rule`/`nft`، کش Surfshark، وضعیت `5353`/`HTTPS RR`/`PortQuiz`/Fastly و `PMTU`.
-- [scripts/ss-wg](scripts/ss-wg): پاک‌سازی تداخل‌های سیستمی و چرخش خودکار اندپوینت‌های WireGuard (`fix-system`، `up [phx|lax|<profile>|/path/to/conf] [--force]`، `down`، `clean`، `status`).
-- [scripts/fix-fastly-apt.sh](scripts/fix-fastly-apt.sh): تست ۲۰ کیلوبایتی، پین‌کردن نودهای سالم Fastly در `/etc/hosts` و تنظیم `Acquire::ForceIPv4 "true";` برای APT (`status`، `apply`، `revert`).
-- [scripts/probe-filtering.py](scripts/probe-filtering.py): اجرای مستقیم ماژول `filternet probe`.
-
----
-
-## ساختار مخزن
-
-- `filternet/`: پکیج چندسکویی Python 3.9+ (`cli.py`، `net_os.py`، `dns_raw.py`، `dpi.py`، `fastly.py`، `hosts_mgr.py`، `wg_conf.py`)
-- `configs/dnscrypt-proxy/`: کانفیگ `dnscrypt-proxy-crossplatform.toml` (`127.0.0.1:53`)، `dnscrypt-proxy.toml` (`systemd`) و `resolved.conf`
-- `configs/wireguard/`: نمونه بدون کلید `surfshark-wg.conf.example`
-- `configs/NetworkManager/`: فایل `90-ss-wg-unmanaged.conf`
-- `configs/hosts/` و `configs/apt/`: فایل‌های مرجع `fastly-healthy-mirrors.hosts` و `99-filternet-ipv4.conf`
-- `docs/`: [CROSS_PLATFORM_GUIDE.md](docs/CROSS_PLATFORM_GUIDE.md)، [MCI_FORENSIC_FINDINGS.md](docs/MCI_FORENSIC_FINDINGS.md)، [TIMELINE_AND_FIXES.md](docs/TIMELINE_AND_FIXES.md)، [DIAGNOSTICS_GUIDE.md](docs/DIAGNOSTICS_GUIDE.md)
-- `scripts/`: اسکریپت‌های لینوکس و رانر خط فرمان
-- `tests/`: تست‌های واحد آفلاین (`python -m unittest discover -s tests -v`)
+برای مدیریت کامل `NetworkManager`، `systemd-resolved` و پروفیل‌های وایرگارد روی لینوکس:
+- [`./scripts/diagnose-vpn.sh`](scripts/diagnose-vpn.sh) — بررسی کامل و فقط‌خواندنی شبکه، بریج‌های `172.20.0.0/16`، قوانین `ip rule`/`nft`، کش Surfshark، DNS و `PMTU`
+- [`./scripts/ss-wg`](scripts/ss-wg) — پاک‌سازی تداخل‌های سیستمی و چرخش خودکار سرورهای WireGuard (`fix-system`، `up`، `down`، `clean`، `status`)
+- [`./scripts/fix-fastly-apt.sh`](scripts/fix-fastly-apt.sh) — پین کردن نودهای سالم Debian/PyPI در `/etc/hosts` و فعال‌سازی IPv4 در APT (`status`، `apply`، `revert`)
+- [`./scripts/probe-filtering.py`](scripts/probe-filtering.py) — اجرای مستقیم `filternet probe`
 
 ---
 
-## مجوز انتشار
+## مستندات فنی و ابزار جرم‌شناسی مکمل
+
+- [راهنمای ساده برای کاربران عادی (فارسی)](docs/BEGINNERS_GUIDE_FA.md) · [Plain-Language Guide (EN)](docs/BEGINNERS_GUIDE_EN.md)
+- [راهنمای نصب روی ویندوز، مک و لینوکس](docs/CROSS_PLATFORM_GUIDE.md)
+- [یافته‌های جرم‌شناسی سه‌مرحله‌ای همراه اول (`AS197207`)](docs/MCI_FORENSIC_FINDINGS.md) — ثبت `134` بسته جعلی `RST` با `TTL=60` و `p=2.73e-34`، آزمون دو-سروری `probe-test-404.*` (`12/20`)، اختلال `45.6%` سرویس‌های ابری (`26/57`) و قفل بایت `5552` روی Fastly
+- [شرح کامل خطاها و راه‌حل‌های سیستم](docs/TIMELINE_AND_FIXES.md)
+- [راهنمای دستورات تشخیصی دستی](docs/DIAGNOSTICS_GUIDE.md)
+- اگر قصد ثبت شکایت رسمی در سامانه **۱۹۵** یا گرفتن کپچر `PCAPNG` و PDF شکایت دارید، از پروژه مکمل **[shitnet](https://github.com/v7lthronyx1/shitnet)** استفاده کنید.
+
+---
+
+## امنیت و لایسنس
+
+هیچ کلید خصوصی، IP مشترک یا فایل کپچر خام در این مخزن ذخیره نمی‌شود (مطالعه [SECURITY.md](SECURITY.md) و [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 منتشرشده تحت لایسنس **MIT** — **Aiden Azad (V7lthronyx)**

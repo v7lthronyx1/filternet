@@ -105,6 +105,57 @@ def print_probe_summary(rep):
         for label, res in rep["cloud"].items():
             print(f"  {label:<26}: {res['outcome']} ({res['tls_ms'] or res['tcp_ms'] or '-'} ms)")
 
+    tips = summarize_findings(probe_rep=rep)
+    print("\n[What This Means]")
+    for t in tips:
+        print(f"  - {t}")
+
+
+def summarize_findings(doc_rep=None, probe_rep=None):
+    tips = []
+    if doc_rep:
+        ext_v = classify_dns_verdict(doc_rep["udp53_8844_probe"])
+        if ext_v.startswith(("SINKHOLE", "FORCED_SAFESEARCH", "PRIVATE_HIJACK")):
+            tips.append("Plain DNS is being altered by your network. Use IP-only DoH via: filternet dns-config")
+        if doc_rep["doh_ip_1111"]["ok"] and not doc_rep["doh_domain_cf"]["ok"]:
+            tips.append("Domain DoH (cloudflare-dns.com) is blocked while bare-IP DoH (1.1.1.1) works.")
+        f = doc_rep["fastly"]
+        if f["151.101.18.132_20k"]["bytes"] < 20000 and f["146.75.118.132_20k"]["bytes"] >= 20000:
+            tips.append("Fastly node 151.101.18.132 stalls mid-download (breaks apt/pip). Fix with: filternet hosts-pin apply")
+        if not doc_rep["pmtu_1500_ok"]:
+            tips.append("1500B unfragmented packets failed (normal inside a VPN tunnel; set WireGuard MTU = 1280).")
+
+    if probe_rep:
+        dns = probe_rep["dns"]
+        hijacked = any(
+            classify_dns_verdict(dns[k]).startswith(("SINKHOLE", "FORCED_SAFESEARCH", "PRIVATE_HIJACK"))
+            for k in ("udp53_8844_x", "udp53_8844_google", "udp5353_opendns_x", "tcp5353_opendns_x")
+            if k in dns
+        )
+        if hijacked:
+            tips.append("Plain DNS is returning fake/filtered IPs (even on port 5353). Use IP-only DoH via: filternet dns-config")
+        p = probe_rep["protocols"]
+        if p["doh_ip_1111"]["ok"] and not p["doh_domain_cf"]["ok"]:
+            tips.append("Domain-based encrypted DNS is blocked while bare-IP DoH (1.1.1.1) works cleanly.")
+        d = probe_rep["dpi"]
+        if not d["x_normal"]["ok"] and d["x_split_2b"]["ok"]:
+            tips.append("Your ISP blocks sites by reading the domain name (SNI), and 2-byte splitting (split_2b) bypasses it.")
+        if not d["synthetic_hetzner_404"]["ok"] and d["synthetic_hetzner_ctrl"]["ok"]:
+            tips.append("Confirmed mid-path keyword filtering: even non-existent domains sent to a clean server were cut.")
+        f = probe_rep["fastly"]
+        if f["151.101.18.132_20k"]["bytes"] < 20000 and f["146.75.118.132_20k"]["bytes"] >= 20000:
+            tips.append("Fastly node 151.101.18.132 stalled above ~5.5 KB. Fix downloads/updates with: filternet hosts-pin apply")
+        c = probe_rep.get("cloud") or {}
+        if c:
+            ok_good = c.get("Hetzner-FSN1", {}).get("ok") or c.get("Vultr-FRA", {}).get("ok")
+            bad_vps = [k for k in ("Linode-FRA", "DO-FRA-Pool", "OVH-Proof") if k in c and not c[k].get("ok")]
+            if ok_good and bad_vps:
+                tips.append(f"Cloud routing drops detected ({', '.join(bad_vps)}); Hetzner/Vultr paths are healthier.")
+
+    if not tips:
+        tips.append("No active filtering or Fastly download stalls detected on this connection.")
+    return tips
+
 
 def run_doctor(source_ip=None):
     stub = pick_local_stub()
@@ -163,6 +214,9 @@ def cmd_doctor(args):
         print("Interfaces:")
         for line in doc["interfaces"][:10]:
             print(f"  {line}")
+    print("\n[What This Means]")
+    for t in summarize_findings(doc_rep=doc):
+        print(f"  - {t}")
     return 0
 
 

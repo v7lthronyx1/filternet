@@ -5,7 +5,7 @@ import tempfile
 import tokenize
 import unittest
 from filternet import APP_NAME, AUTHOR, BRAND, REPO_URL
-from filternet.cli import build_parser, main
+from filternet.cli import build_parser, main, summarize_findings
 from filternet.dns_raw import build_dns_query, classify_dns_verdict, encode_dns_name, parse_dns_reply
 from filternet.dpi import build_client_hello, classify_tls_bytes
 from filternet.hosts_mgr import apply_pins, read_managed_pins, revert_pins
@@ -128,6 +128,22 @@ class TestFilterNetOffline(unittest.TestCase):
             txt = out_toml.read_text(encoding="utf-8")
             self.assertIn("127.0.0.1:53", txt)
             self.assertIn("sdns://", txt)
+
+    def test_plain_language_summary_findings(self):
+        doc_bad = {
+            "udp53_8844_probe": {"ok": True, "ips": ["10.10.34.36"]},
+            "doh_ip_1111": {"ok": True},
+            "doh_domain_cf": {"ok": False},
+            "fastly": {
+                "151.101.18.132_20k": {"bytes": 5552},
+                "146.75.118.132_20k": {"bytes": 20480},
+            },
+            "pmtu_1500_ok": True,
+        }
+        tips = summarize_findings(doc_rep=doc_bad)
+        joined = " ".join(tips)
+        self.assertIn("dns-config", joined)
+        self.assertIn("hosts-pin apply", joined)
 
 
 if __name__ == "__main__":
