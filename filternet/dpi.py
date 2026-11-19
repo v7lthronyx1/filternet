@@ -58,7 +58,8 @@ def classify_tls_bytes(data):
     if rtype == 0x15 and len(data) >= 7:
         return f"TLS_ALERT_{data[5]}_{data[6]}"
     if data.startswith(b"HTTP/"):
-        return f"RAW_HTTP_{data.split(b'\r\n', 1)[0].decode('latin1', 'replace')}"
+        first_line = data.split(b"\r\n", 1)[0].decode("latin1", "replace")
+        return f"RAW_HTTP_{first_line}"
     return f"DATA_{rtype:#x}"
 
 
