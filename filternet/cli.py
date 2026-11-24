@@ -9,7 +9,7 @@ from .dns_raw import classify_dns_verdict, pick_local_stub, query_dns_raw, run_d
 from .dpi import doh_probe, run_cloud_checks, run_dpi_checks, run_protocol_checks
 from .fastly import DEBIAN_POPS, pick_healthy_mirrors, probe_fastly_debian_range, run_fastly_checks
 from .hosts_mgr import apply_pins, default_hosts_path, read_managed_pins, revert_pins
-from .net_os import detect_active_interfaces, detect_local_dns_servers, get_os, is_admin, pmtu_check, resolve_source_ip
+from .net_os import detect_active_interfaces, detect_local_dns_servers, get_os, is_admin, pmtu_check, resolve_bind_target
 from .wg_conf import prepare_wg_config
 
 DNSCRYPT_CROSSPLATFORM_TOML = """listen_addresses = ['127.0.0.1:53']
@@ -48,14 +48,14 @@ bootstrap_resolvers = ['1.1.1.1:53', '8.8.8.8:53']
 DNSCRYPT_SYSTEMD_TOML = DNSCRYPT_CROSSPLATFORM_TOML.replace("listen_addresses = ['127.0.0.1:53']", "listen_addresses = []", 1)
 
 
-def run_probe_suite(source_ip=None, quick=False):
+def run_probe_suite(source_ip=None, quick=False, bind_iface=None):
     report = {"os": get_os(), "source_ip": source_ip or "default", "dns": {}, "protocols": {}, "dpi": {}, "fastly": {}, "cloud": {}}
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-        f_dns = ex.submit(run_dns_checks, source_ip)
-        f_proto = ex.submit(run_protocol_checks, source_ip)
-        f_dpi = ex.submit(run_dpi_checks, source_ip)
-        f_fastly = ex.submit(run_fastly_checks, source_ip)
-        f_cloud = ex.submit(run_cloud_checks, source_ip) if not quick else None
+        f_dns = ex.submit(run_dns_checks, source_ip, bind_iface)
+        f_proto = ex.submit(run_protocol_checks, source_ip, bind_iface)
+        f_dpi = ex.submit(run_dpi_checks, source_ip, bind_iface)
+        f_fastly = ex.submit(run_fastly_checks, source_ip, bind_iface)
+        f_cloud = ex.submit(run_cloud_checks, source_ip, bind_iface) if not quick else None
         report["dns"] = f_dns.result()
         report["protocols"] = f_proto.result()
         report["dpi"] = f_dpi.result()
@@ -140,6 +140,8 @@ def summarize_findings(doc_rep=None, probe_rep=None):
         d = probe_rep["dpi"]
         if not d["x_normal"]["ok"] and d["x_split_2b"]["ok"]:
             tips.append("Your ISP blocks sites by reading the domain name (SNI), and 2-byte splitting (split_2b) bypasses it.")
+        elif not d["x_normal"]["ok"] and d.get("x_rec_split_2", {}).get("ok"):
+            tips.append("Your ISP blocks sites by reading the domain name (SNI) and resets plain TCP 2-byte splits; TLS record splitting (rec_split_2) bypasses it.")
         if not d["synthetic_hetzner_404"]["ok"] and d["synthetic_hetzner_ctrl"]["ok"]:
             tips.append("Confirmed mid-path keyword filtering: even non-existent domains sent to a clean server were cut.")
         f = probe_rep["fastly"]
@@ -157,15 +159,15 @@ def summarize_findings(doc_rep=None, probe_rep=None):
     return tips
 
 
-def run_doctor(source_ip=None):
+def run_doctor(source_ip=None, bind_iface=None):
     stub = pick_local_stub()
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-        f_stub = ex.submit(query_dns_raw, stub, "x.com", 1, 53, "udp", source_ip)
-        f_ext = ex.submit(query_dns_raw, "8.8.4.4", "x.com", 1, 53, "udp", source_ip)
-        f_doh_ip = ex.submit(doh_probe, "1.1.1.1", "1.1.1.1", source_ip)
-        f_doh_dom = ex.submit(doh_probe, "104.16.248.249", "cloudflare-dns.com", source_ip)
-        f_fastly = ex.submit(run_fastly_checks, source_ip)
-        f_pmtu = ex.submit(pmtu_check, "1.1.1.1", 1472, source_ip)
+        f_stub = ex.submit(query_dns_raw, stub, "x.com", 1, 53, "udp", source_ip, 2.0, None if stub.startswith("127.") else bind_iface)
+        f_ext = ex.submit(query_dns_raw, "8.8.4.4", "x.com", 1, 53, "udp", source_ip, 2.0, bind_iface)
+        f_doh_ip = ex.submit(doh_probe, "1.1.1.1", "1.1.1.1", source_ip, 4.0, bind_iface)
+        f_doh_dom = ex.submit(doh_probe, "104.16.248.249", "cloudflare-dns.com", source_ip, 4.0, bind_iface)
+        f_fastly = ex.submit(run_fastly_checks, source_ip, bind_iface)
+        f_pmtu = ex.submit(pmtu_check, "1.1.1.1", 1472, source_ip, bind_iface)
     return {
         "os": get_os(),
         "platform": platform.platform(),
@@ -185,8 +187,8 @@ def run_doctor(source_ip=None):
 
 
 def cmd_probe(args):
-    src_ip = resolve_source_ip(args.interface)
-    rep = run_probe_suite(source_ip=src_ip, quick=args.quick)
+    src_ip, bind_iface = resolve_bind_target(args.interface)
+    rep = run_probe_suite(source_ip=src_ip, quick=args.quick, bind_iface=bind_iface)
     if args.json:
         print(json.dumps(rep, indent=2, ensure_ascii=False))
     else:
@@ -195,8 +197,8 @@ def cmd_probe(args):
 
 
 def cmd_doctor(args):
-    src_ip = resolve_source_ip(args.interface)
-    doc = run_doctor(source_ip=src_ip)
+    src_ip, bind_iface = resolve_bind_target(args.interface)
+    doc = run_doctor(source_ip=src_ip, bind_iface=bind_iface)
     if args.json:
         print(json.dumps(doc, indent=2, ensure_ascii=False))
         return 0

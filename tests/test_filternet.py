@@ -145,6 +145,25 @@ class TestFilterNetOffline(unittest.TestCase):
         self.assertIn("dns-config", joined)
         self.assertIn("hosts-pin apply", joined)
 
+        probe_rec = {
+            "dns": {},
+            "protocols": {"doh_ip_1111": {"ok": True}, "doh_domain_cf": {"ok": False}},
+            "dpi": {
+                "x_normal": {"ok": False},
+                "x_split_2b": {"ok": False},
+                "x_rec_split_2": {"ok": True},
+                "synthetic_hetzner_404": {"ok": False},
+                "synthetic_hetzner_ctrl": {"ok": True},
+            },
+            "fastly": {
+                "151.101.18.132_20k": {"bytes": 20480},
+                "146.75.118.132_20k": {"bytes": 20480},
+            },
+        }
+        probe_tips = " ".join(summarize_findings(probe_rep=probe_rec))
+        self.assertIn("rec_split_2", probe_tips)
+        self.assertIn("keyword filtering", probe_tips)
+
 
 if __name__ == "__main__":
     unittest.main()

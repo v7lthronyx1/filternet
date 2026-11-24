@@ -87,7 +87,7 @@ filternet dns-config --target crossplatform -o dnscrypt-proxy.toml  # ساخت �
 
 - [راهنمای ساده برای کاربران عادی (فارسی)](docs/BEGINNERS_GUIDE_FA.md) · [Plain-Language Guide (EN)](docs/BEGINNERS_GUIDE_EN.md)
 - [راهنمای نصب روی ویندوز، مک و لینوکس](docs/CROSS_PLATFORM_GUIDE.md)
-- [یافته‌های جرم‌شناسی سه‌مرحله‌ای همراه اول (`AS197207`)](docs/MCI_FORENSIC_FINDINGS.md) — ثبت `134` بسته جعلی `RST` با `TTL=60` و `p=2.73e-34`، آزمون دو-سروری `probe-test-404.*` (`12/20`)، اختلال `45.6%` سرویس‌های ابری (`26/57`) و قفل بایت `5552` روی Fastly
+- [یافته‌های جرم‌شناسی چهارمرحله‌ای همراه اول (`AS197207`)](docs/MCI_FORENSIC_FINDINGS.md): ثبت `146` بسته جعلی `RST` با `TTL=60` (`88.4%`) و `p=7.49e-41`، آزمون دو-سروری `probe-test-404.*` (`12/20`)، اختلال `39.3%` سرویس‌های ابری (`24/61`)، تخریب `split_2b` روی اهداف سخت‌تر و عبور `100%` با `rec_split_2` و `ECH` واقعی و تداوم قفل بایت `5552` روی Fastly
 - [شرح کامل خطاها و راه‌حل‌های سیستم](docs/TIMELINE_AND_FIXES.md)
 - [راهنمای دستورات تشخیصی دستی](docs/DIAGNOSTICS_GUIDE.md)
 - اگر قصد ثبت شکایت رسمی در سامانه **۱۹۵** یا گرفتن کپچر `PCAPNG` و PDF شکایت دارید، از پروژه مکمل **[shitnet](https://github.com/v7lthronyx1/shitnet)** استفاده کنید.

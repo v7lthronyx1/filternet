@@ -57,7 +57,8 @@ pipx install .
 
 ```bash
 filternet doctor                                                    # Safe read-only check with plain-English summary
-filternet probe                                                     # Test DNS (53/5353), DPI (split_2b), Fastly stall & VPS routes
+filternet probe                                                     # Test DNS (53/5353), DPI (split_2b/rec_split_2), Fastly stall & VPS routes
+filternet probe -i eth0 --quick                                     # Bind probes directly to an ISP interface behind an active VPN
 filternet hosts-pin status                                          # Check if Fastly 151.101.18.132 is stalling updates
 sudo filternet hosts-pin apply                                      # Pin healthy download mirrors (Windows Admin / sudo)
 sudo filternet hosts-pin revert                                     # Undo all hosts changes cleanly
@@ -117,7 +118,8 @@ pipx install .
 
 ```bash
 filternet doctor                                                # بررسی سریع و امن همراه با توضیح ساده مشکل
-filternet probe                                                 # تست DNS (53/5353)، بایپس split_2b، قفل Fastly و وضعیت کلودها
+filternet probe                                                 # تست DNS (53/5353)، بایپس split_2b/rec_split_2، قفل Fastly و وضعیت کلودها
+filternet probe -i eth0 --quick                                 # اجرای مستقیم تست روی کارت شبکه اپراتور از پشت VPN فعال
 filternet hosts-pin status                                      # بررسی قفل بودن نود 151.101.18.132 برای دانلودها
 sudo filternet hosts-pin apply                                  # پین کردن نود سالم Fastly (در ویندوز با Admin / مک و لینوکس با sudo)
 sudo filternet hosts-pin revert                                 # بازگرداندن فایل hosts به حالت اول
@@ -138,7 +140,7 @@ filternet dns-config --target crossplatform -o dnscrypt-proxy.toml  # ساخت �
 
 - [Beginner Guide — No Tech Skills Needed (EN)](docs/BEGINNERS_GUIDE_EN.md) · [راهنمای ساده فارسی (FA)](docs/BEGINNERS_GUIDE_FA.md)
 - [Cross-Platform Setup Guide](docs/CROSS_PLATFORM_GUIDE.md)
-- [MCI (`AS197207`) 3-Session Forensic Findings](docs/MCI_FORENSIC_FINDINGS.md)
+- [MCI (`AS197207`) 4-Session Forensic Findings](docs/MCI_FORENSIC_FINDINGS.md)
 - [Root Causes & Applied Fixes](docs/TIMELINE_AND_FIXES.md)
 - [Manual Diagnostics Guide](docs/DIAGNOSTICS_GUIDE.md)
 - Full `dumpcap`/`tshark` PCAP captures & legal complaint PDFs (`195.cra.ir`): **[shitnet](https://github.com/v7lthronyx1/shitnet)**

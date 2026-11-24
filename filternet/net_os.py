@@ -30,6 +30,41 @@ def is_admin():
     return os.geteuid() == 0
 
 
+def resolve_bind_target(iface_or_ip):
+    if not iface_or_ip:
+        return None, None
+    try:
+        ipaddress.IPv4Address(iface_or_ip)
+        return iface_or_ip, None
+    except ValueError:
+        pass
+    ip = resolve_source_ip(iface_or_ip)
+    bind_iface = iface_or_ip if get_os() == "linux" else None
+    return ip, bind_iface
+
+
+def bind_socket(sock, source_ip=None, bind_iface=None):
+    if bind_iface and hasattr(socket, "SO_BINDTODEVICE"):
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, bind_iface.encode("ascii") + b"\x00")
+            return
+        except OSError:
+            pass
+    if source_ip:
+        sock.bind((source_ip, 0))
+
+
+def _connect_pinned_tcp(connect_ip, port, timeout, source_address=None, bind_iface=None):
+    if bind_iface and hasattr(socket, "SO_BINDTODEVICE"):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        src_ip = source_address[0] if source_address else None
+        bind_socket(sock, source_ip=src_ip, bind_iface=bind_iface)
+        sock.connect((connect_ip, port))
+        return sock
+    return socket.create_connection((connect_ip, port), timeout, source_address)
+
+
 def resolve_source_ip(iface_or_ip):
     if not iface_or_ip:
         return None
@@ -112,7 +147,7 @@ def detect_active_interfaces():
     return []
 
 
-def pmtu_check(target="1.1.1.1", payload_bytes=1472, source_ip=None):
+def pmtu_check(target="1.1.1.1", payload_bytes=1472, source_ip=None, bind_iface=None):
     os_name = get_os()
     if os_name == "windows":
         cmd = ["ping", "-n", "1", "-f", "-l", str(payload_bytes), "-w", "2000"]
@@ -124,8 +159,9 @@ def pmtu_check(target="1.1.1.1", payload_bytes=1472, source_ip=None):
             cmd += ["-S", source_ip]
     else:
         cmd = ["ping", "-n", "-M", "do", "-s", str(payload_bytes), "-c", "1", "-W", "2"]
-        if source_ip:
-            cmd += ["-I", source_ip]
+        bind_dev = bind_iface or source_ip
+        if bind_dev:
+            cmd += ["-I", bind_dev]
     cmd.append(target)
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
@@ -155,29 +191,31 @@ def flush_dns_cache():
 
 
 class PinnedHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, host, port=80, connect_ip=None, **kwargs):
+    def __init__(self, host, port=80, connect_ip=None, bind_iface=None, **kwargs):
         super().__init__(host, port=port, **kwargs)
         self._connect_ip = connect_ip or host
+        self._bind_iface = bind_iface
 
     def connect(self):
-        self.sock = socket.create_connection((self._connect_ip, self.port), self.timeout, self.source_address)
+        self.sock = _connect_pinned_tcp(self._connect_ip, self.port, self.timeout, self.source_address, self._bind_iface)
 
 
 class PinnedHTTPSConnection(http.client.HTTPSConnection):
-    def __init__(self, host, port=443, connect_ip=None, sni_host=None, verify_ssl=True, **kwargs):
+    def __init__(self, host, port=443, connect_ip=None, sni_host=None, verify_ssl=True, bind_iface=None, **kwargs):
         ctx = ssl.create_default_context() if verify_ssl else ssl._create_unverified_context()
         super().__init__(host, port=port, context=ctx, **kwargs)
         self._connect_ip = connect_ip or host
         self._sni_host = sni_host or host
+        self._bind_iface = bind_iface
 
     def connect(self):
-        sock = socket.create_connection((self._connect_ip, self.port), self.timeout, self.source_address)
+        sock = _connect_pinned_tcp(self._connect_ip, self.port, self.timeout, self.source_address, self._bind_iface)
         self.sock = self._context.wrap_socket(sock, server_hostname=self._sni_host)
 
 
-def http_fetch_pinned(ip, host_hdr, path, port=None, https=True, headers=None, timeout=5.0, source_ip=None, verify_ssl=True):
+def http_fetch_pinned(ip, host_hdr, path, port=None, https=True, headers=None, timeout=5.0, source_ip=None, verify_ssl=True, bind_iface=None):
     port = port or (443 if https else 80)
-    src = (source_ip, 0) if source_ip else None
+    src = (source_ip, 0) if (source_ip and not bind_iface) else None
     req_headers = {"Host": host_hdr, "User-Agent": "FilterNet/1.0", "Connection": "close"}
     if headers:
         req_headers.update(headers)
@@ -186,9 +224,9 @@ def http_fetch_pinned(ip, host_hdr, path, port=None, https=True, headers=None, t
     t0 = time.monotonic()
     try:
         if https:
-            conn = PinnedHTTPSConnection(host_hdr, port=port, connect_ip=ip, sni_host=host_hdr, verify_ssl=verify_ssl, timeout=timeout, source_address=src)
+            conn = PinnedHTTPSConnection(host_hdr, port=port, connect_ip=ip, sni_host=host_hdr, verify_ssl=verify_ssl, bind_iface=bind_iface, timeout=timeout, source_address=src)
         else:
-            conn = PinnedHTTPConnection(host_hdr, port=port, connect_ip=ip, timeout=timeout, source_address=src)
+            conn = PinnedHTTPConnection(host_hdr, port=port, connect_ip=ip, bind_iface=bind_iface, timeout=timeout, source_address=src)
         conn.request("GET", path, headers=req_headers)
         resp = conn.getresponse()
         status = resp.status

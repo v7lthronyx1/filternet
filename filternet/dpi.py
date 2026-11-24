@@ -1,10 +1,11 @@
 import concurrent.futures
+import json
 import os
 import socket
 import ssl
 import struct
 import time
-from .net_os import http_fetch_pinned, pmtu_check
+from .net_os import bind_socket, http_fetch_pinned, pmtu_check
 
 
 def build_client_hello(sni, tls12=False, pad_to=0, grease_ech=False):
@@ -63,15 +64,14 @@ def classify_tls_bytes(data):
     return f"DATA_{rtype:#x}"
 
 
-def raw_tls_probe(ip, sni, source_ip=None, mode="normal", port=443, timeout=3.2):
+def raw_tls_probe(ip, sni, source_ip=None, mode="normal", port=443, timeout=3.2, bind_iface=None):
     res = {"ok": False, "outcome": None, "tcp_ms": None, "tls_ms": None, "error": None}
     s = None
     t0 = time.monotonic()
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)
-        if source_ip:
-            s.bind((source_ip, 0))
+        bind_socket(s, source_ip=source_ip, bind_iface=bind_iface)
         s.connect((ip, port))
         res["tcp_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
         if mode == "tls12":
@@ -139,14 +139,13 @@ def raw_tls_probe(ip, sni, source_ip=None, mode="normal", port=443, timeout=3.2)
     return res
 
 
-def http_host_probe(ip, host, source_ip=None, timeout=2.5):
+def http_host_probe(ip, host, source_ip=None, timeout=2.5, bind_iface=None):
     res = {"ok": False, "status": None, "block_sig": None, "error": None}
     s = None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)
-        if source_ip:
-            s.bind((source_ip, 0))
+        bind_socket(s, source_ip=source_ip, bind_iface=bind_iface)
         s.connect((ip, 80))
         req = f"GET / HTTP/1.1\r\nHost: {host}\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n".encode("ascii")
         s.sendall(req)
@@ -175,7 +174,7 @@ def http_host_probe(ip, host, source_ip=None, timeout=2.5):
     return res
 
 
-def https_status_probe(ip, host, source_ip=None, timeout=3.5):
+def https_status_probe(ip, host, source_ip=None, timeout=3.5, bind_iface=None):
     res = {"ok": False, "status": None, "error": None}
     s = None
     try:
@@ -184,8 +183,7 @@ def https_status_probe(ip, host, source_ip=None, timeout=3.5):
         ctx.verify_mode = ssl.CERT_NONE
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)
-        if source_ip:
-            s.bind((source_ip, 0))
+        bind_socket(s, source_ip=source_ip, bind_iface=bind_iface)
         s.connect((ip, 443))
         ws = ctx.wrap_socket(s, server_hostname=host)
         req = f"HEAD / HTTP/1.1\r\nHost: {host}\r\nUser-Agent: FilterNet/1.0\r\nConnection: close\r\n\r\n".encode("ascii")
@@ -207,11 +205,10 @@ def https_status_probe(ip, host, source_ip=None, timeout=3.5):
     return res
 
 
-def probe_tcp_port(ip, port, source_ip=None, timeout=2.5):
+def probe_tcp_port(ip, port, source_ip=None, timeout=2.5, bind_iface=None):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(timeout)
-    if source_ip:
-        s.bind((source_ip, 0))
+    bind_socket(s, source_ip=source_ip, bind_iface=bind_iface)
     t0 = time.monotonic()
     try:
         s.connect((ip, port))
@@ -222,15 +219,14 @@ def probe_tcp_port(ip, port, source_ip=None, timeout=2.5):
         s.close()
 
 
-def dot_handshake_probe(ip, sni, source_ip=None, timeout=3.0):
+def dot_handshake_probe(ip, sni, source_ip=None, timeout=3.0, bind_iface=None):
     res = {"tcp_ok": False, "tls_ok": False, "ms": None, "err": None}
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(timeout)
-    if source_ip:
-        s.bind((source_ip, 0))
+    bind_socket(s, source_ip=source_ip, bind_iface=bind_iface)
     t0 = time.monotonic()
     try:
         s.connect((ip, 853))
@@ -249,7 +245,7 @@ def dot_handshake_probe(ip, sni, source_ip=None, timeout=3.0):
     return res
 
 
-def doh_probe(ip, host_hdr, source_ip=None, timeout=4.0):
+def doh_probe(ip, host_hdr, source_ip=None, timeout=4.0, bind_iface=None):
     r = http_fetch_pinned(
         ip,
         host_hdr,
@@ -259,16 +255,16 @@ def doh_probe(ip, host_hdr, source_ip=None, timeout=4.0):
         headers={"Accept": "application/dns-json"},
         timeout=timeout,
         source_ip=source_ip,
+        bind_iface=bind_iface,
     )
     return {"ok": r["http_code"] == 200, "http_code": str(r["http_code"]) if r["http_code"] else None, "err": r["err"]}
 
 
-def ntp_probe(ip, source_ip=None):
+def ntp_probe(ip, source_ip=None, bind_iface=None):
     pkt = b"\x1b" + (47 * b"\x00")
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(2.2)
-    if source_ip:
-        s.bind((source_ip, 0))
+    bind_socket(s, source_ip=source_ip, bind_iface=bind_iface)
     t0 = time.monotonic()
     try:
         s.sendto(pkt, (ip, 123))
@@ -280,42 +276,68 @@ def ntp_probe(ip, source_ip=None):
         s.close()
 
 
-def run_protocol_checks(source_ip=None):
+def resolve_portquiz_ip(source_ip=None, bind_iface=None):
+    r = http_fetch_pinned(
+        "1.1.1.1",
+        "1.1.1.1",
+        "/dns-query?name=portquiz.net&type=A",
+        port=443,
+        https=True,
+        headers={"Accept": "application/dns-json"},
+        timeout=2.0,
+        source_ip=source_ip,
+        bind_iface=bind_iface,
+    )
+    if r.get("http_code") == 200 and r.get("body"):
+        try:
+            data = json.loads(r["body"])
+            for ans in data.get("Answer", []):
+                ip = str(ans.get("data", "")).strip()
+                if ans.get("type") == 1 and ip:
+                    socket.inet_aton(ip)
+                    return ip
+        except Exception:
+            pass
+    return "13.216.200.40"
+
+
+def run_protocol_checks(source_ip=None, bind_iface=None):
+    pq_ip = resolve_portquiz_ip(source_ip=source_ip, bind_iface=bind_iface)
     tasks = {
-        "portquiz_443": (probe_tcp_port, ("35.180.86.68", 443, source_ip)),
-        "portquiz_853": (probe_tcp_port, ("35.180.86.68", 853, source_ip)),
-        "portquiz_51820": (probe_tcp_port, ("35.180.86.68", 51820, source_ip)),
-        "dot_1111": (dot_handshake_probe, ("1.1.1.1", "cloudflare-dns.com", source_ip)),
-        "dot_adguard": (dot_handshake_probe, ("94.140.14.14", "dns.adguard-dns.com", source_ip)),
-        "doh_ip_1111": (doh_probe, ("1.1.1.1", "1.1.1.1", source_ip)),
-        "doh_domain_cf": (doh_probe, ("104.16.248.249", "cloudflare-dns.com", source_ip)),
-        "ntp_google": (ntp_probe, ("216.239.35.4", source_ip)),
-        "ntp_cloudflare": (ntp_probe, ("162.159.200.1", source_ip)),
-        "pmtu_1500_ok": (pmtu_check, ("1.1.1.1", 1472, source_ip)),
+        "portquiz_443": (probe_tcp_port, (pq_ip, 443, source_ip, 2.5, bind_iface)),
+        "portquiz_853": (probe_tcp_port, (pq_ip, 853, source_ip, 2.5, bind_iface)),
+        "portquiz_51820": (probe_tcp_port, (pq_ip, 51820, source_ip, 2.5, bind_iface)),
+        "dot_1111": (dot_handshake_probe, ("1.1.1.1", "cloudflare-dns.com", source_ip, 3.0, bind_iface)),
+        "dot_adguard": (dot_handshake_probe, ("94.140.14.14", "dns.adguard-dns.com", source_ip, 3.0, bind_iface)),
+        "doh_ip_1111": (doh_probe, ("1.1.1.1", "1.1.1.1", source_ip, 4.0, bind_iface)),
+        "doh_domain_cf": (doh_probe, ("104.16.248.249", "cloudflare-dns.com", source_ip, 4.0, bind_iface)),
+        "ntp_google": (ntp_probe, ("216.239.35.4", source_ip, bind_iface)),
+        "ntp_cloudflare": (ntp_probe, ("162.159.200.1", source_ip, bind_iface)),
+        "pmtu_1500_ok": (pmtu_check, ("1.1.1.1", 1472, source_ip, bind_iface)),
     }
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         futs = {k: ex.submit(fn, *args) for k, (fn, args) in tasks.items()}
         return {k: fut.result() for k, fut in futs.items()}
 
 
-def run_dpi_checks(source_ip=None):
+def run_dpi_checks(source_ip=None, bind_iface=None):
     return {
-        "synthetic_hetzner_404": raw_tls_probe("78.46.170.2", "probe-test-404.pages.dev", source_ip=source_ip, mode="normal"),
-        "synthetic_vultr_404": raw_tls_probe("108.61.210.117", "probe-test-404.pages.dev", source_ip=source_ip, mode="normal"),
-        "synthetic_hetzner_ctrl": raw_tls_probe("78.46.170.2", "fsn1-speed.hetzner.com", source_ip=source_ip, mode="normal"),
-        "http_nsv2_404": http_host_probe("78.46.170.2", "probe-test-404.pages.dev", source_ip=source_ip),
-        "x_normal": raw_tls_probe("104.16.132.229", "x.com", source_ip=source_ip, mode="normal"),
-        "x_ech_grease": raw_tls_probe("104.16.132.229", "x.com", source_ip=source_ip, mode="ech_grease"),
-        "x_split_2b": raw_tls_probe("104.16.132.229", "x.com", source_ip=source_ip, mode="split_2b"),
-        "x_rec_split_2": raw_tls_probe("104.16.132.229", "x.com", source_ip=source_ip, mode="rec_split_2"),
-        "do_spaces_normal": raw_tls_probe("5.101.109.44", "fra1.digitaloceanspaces.com", source_ip=source_ip, mode="normal"),
-        "do_spaces_split_2b": raw_tls_probe("5.101.109.44", "fra1.digitaloceanspaces.com", source_ip=source_ip, mode="split_2b"),
-        "cloudflare_tls": raw_tls_probe("104.16.132.229", "cloudflare.com", source_ip=source_ip, mode="normal"),
-        "cloudflare_https": https_status_probe("104.16.132.229", "cloudflare.com", source_ip=source_ip),
+        "synthetic_hetzner_404": raw_tls_probe("78.46.170.2", "probe-test-404.pages.dev", source_ip=source_ip, mode="normal", bind_iface=bind_iface),
+        "synthetic_vultr_404": raw_tls_probe("108.61.210.117", "probe-test-404.pages.dev", source_ip=source_ip, mode="normal", bind_iface=bind_iface),
+        "synthetic_hetzner_ctrl": raw_tls_probe("78.46.170.2", "fsn1-speed.hetzner.com", source_ip=source_ip, mode="normal", bind_iface=bind_iface),
+        "http_nsv2_404": http_host_probe("78.46.170.2", "probe-test-404.pages.dev", source_ip=source_ip, bind_iface=bind_iface),
+        "x_normal": raw_tls_probe("104.16.132.229", "x.com", source_ip=source_ip, mode="normal", bind_iface=bind_iface),
+        "x_ech_grease": raw_tls_probe("104.16.132.229", "x.com", source_ip=source_ip, mode="ech_grease", bind_iface=bind_iface),
+        "x_split_2b": raw_tls_probe("104.16.132.229", "x.com", source_ip=source_ip, mode="split_2b", bind_iface=bind_iface),
+        "x_rec_split_2": raw_tls_probe("104.16.132.229", "x.com", source_ip=source_ip, mode="rec_split_2", bind_iface=bind_iface),
+        "do_spaces_normal": raw_tls_probe("5.101.109.44", "fra1.digitaloceanspaces.com", source_ip=source_ip, mode="normal", bind_iface=bind_iface),
+        "do_spaces_split_2b": raw_tls_probe("5.101.109.44", "fra1.digitaloceanspaces.com", source_ip=source_ip, mode="split_2b", bind_iface=bind_iface),
+        "cloudflare_tls": raw_tls_probe("104.16.132.229", "cloudflare.com", source_ip=source_ip, mode="normal", bind_iface=bind_iface),
+        "cloudflare_https": https_status_probe("104.16.132.229", "cloudflare.com", source_ip=source_ip, bind_iface=bind_iface),
     }
 
 
-def run_cloud_checks(source_ip=None):
+def run_cloud_checks(source_ip=None, bind_iface=None):
     cloud_targets = [
         ("Hetzner-FSN1", "78.46.170.2", "fsn1-speed.hetzner.com"),
         ("Vultr-FRA", "108.61.210.117", "fra-de-ping.vultr.com"),
@@ -325,5 +347,5 @@ def run_cloud_checks(source_ip=None):
         ("Microsoft-150.171.109.71", "150.171.109.71", "microsoft.com"),
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-        futs = {label: ex.submit(raw_tls_probe, ip, sni, source_ip, "normal", 443, 3.0) for label, ip, sni in cloud_targets}
+        futs = {label: ex.submit(raw_tls_probe, ip, sni, source_ip, "normal", 443, 3.0, bind_iface) for label, ip, sni in cloud_targets}
         return {label: fut.result() for label, fut in futs.items()}

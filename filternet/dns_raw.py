@@ -5,7 +5,7 @@ import socket
 import struct
 import time
 import urllib.parse
-from .net_os import detect_local_dns_servers, http_fetch_pinned
+from .net_os import bind_socket, detect_local_dns_servers, http_fetch_pinned
 
 
 def encode_dns_name(domain):
@@ -64,7 +64,7 @@ def parse_dns_reply(wire):
     return res
 
 
-def query_dns_raw(server_ip, domain, rtype_code=1, port=53, proto="udp", source_ip=None, timeout=2.0):
+def query_dns_raw(server_ip, domain, rtype_code=1, port=53, proto="udp", source_ip=None, timeout=2.0, bind_iface=None):
     res = {"ok": False, "rcode": None, "ips": [], "https_rr": 0, "ttl": None, "rtt_ms": None, "error": None}
     packet = build_dns_query(domain, rtype_code=rtype_code)
     s = None
@@ -73,15 +73,13 @@ def query_dns_raw(server_ip, domain, rtype_code=1, port=53, proto="udp", source_
         if proto == "udp":
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(timeout)
-            if source_ip:
-                s.bind((source_ip, 0))
+            bind_socket(s, source_ip=source_ip, bind_iface=bind_iface)
             s.sendto(packet, (server_ip, port))
             wire, _ = s.recvfrom(4096)
         else:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(timeout)
-            if source_ip:
-                s.bind((source_ip, 0))
+            bind_socket(s, source_ip=source_ip, bind_iface=bind_iface)
             s.connect((server_ip, port))
             s.sendall(struct.pack("!H", len(packet)) + packet)
             hdr = b""
@@ -116,7 +114,7 @@ def query_dns_raw(server_ip, domain, rtype_code=1, port=53, proto="udp", source_
     return res
 
 
-def resolve_doh_a(domain, source_ip=None, timeout=4.0):
+def resolve_doh_a(domain, source_ip=None, timeout=4.0, bind_iface=None):
     qname = urllib.parse.quote(domain.strip())
     for srv_ip in ("1.1.1.1", "1.0.0.1"):
         r = http_fetch_pinned(
@@ -128,6 +126,7 @@ def resolve_doh_a(domain, source_ip=None, timeout=4.0):
             headers={"Accept": "application/dns-json"},
             timeout=timeout,
             source_ip=source_ip,
+            bind_iface=bind_iface,
         )
         if r["ok"] and r["body"]:
             try:
@@ -161,7 +160,7 @@ def pick_local_stub():
     return "127.0.2.1"
 
 
-def run_dns_checks(source_ip=None):
+def run_dns_checks(source_ip=None, bind_iface=None):
     stub = pick_local_stub()
     checks = [
         ("local_stub_x", stub, 53, "udp", "x.com", 1),
@@ -174,5 +173,5 @@ def run_dns_checks(source_ip=None):
         ("tcp5353_opendns_x", "208.67.222.222", 5353, "tcp", "x.com", 1),
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
-        futs = {label: ex.submit(query_dns_raw, srv, dom, rcode, port, proto, source_ip) for label, srv, port, proto, dom, rcode in checks}
+        futs = {label: ex.submit(query_dns_raw, srv, dom, rcode, port, proto, source_ip, 2.0, bind_iface) for label, srv, port, proto, dom, rcode in checks}
         return {label: fut.result() for label, fut in futs.items()}
